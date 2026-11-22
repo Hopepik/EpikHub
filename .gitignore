@@ -1,0 +1,35 @@
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Android build outputs
+*.apk
+*.aab
+
+# Operating system
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local environment and secrets
+.env
+.env.*
+*.jks
+*.keystore
+# Node.js dependencies
+node_modules/
+
+# Log files and crash reports
+*.log
+hs_err_pid*.log
+replay_pid*.log

@@ -1,0 +1,232 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==========================================
+    // HELPER FUNCTIONS
+    // ==========================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function userExists() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isCustomer() {
+      return userExists()
+        && ('role' in getUserData())
+        && getUserData().role == 'customer';
+    }
+
+    function isCompanyAdmin(companyId) {
+      return userExists()
+        && ('role' in getUserData())
+        && getUserData().role == 'company_admin'
+        && ('companyId' in getUserData())
+        && getUserData().companyId != null
+        && getUserData().companyId == companyId
+        && companyId != '';
+    }
+
+    function getAdminCompanyId() {
+      return getUserData().companyId;
+    }
+
+    function isString(val) {
+      return val is string;
+    }
+
+    function isNonEmptyString(val) {
+      return val is string && val.size() > 0;
+    }
+
+    function isNumber(val) {
+      return val is int || val is float;
+    }
+
+    function isBool(val) {
+      return val is bool;
+    }
+
+    function isTimestamp(val) {
+      return val is int && val > 0; // Strict integer timestamp in Unix epoch milliseconds
+    }
+
+    // ==========================================
+    // USERS COLLECTION
+    // ==========================================
+    match /users/{userId} {
+      // Users can ONLY read their own profile document.
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+
+      // Public registration: Users can only create their own customer profile
+      allow create: if isAuthenticated()
+                    && request.auth.uid == userId
+                    && request.resource.data.keys().hasAll(['uid', 'fullName', 'email', 'phone', 'role', 'createdAt', 'updatedAt'])
+                    && request.resource.data.keys().hasOnly(['uid', 'fullName', 'email', 'phone', 'role', 'companyId', 'createdAt', 'updatedAt'])
+                    && request.resource.data.uid == userId
+                    && request.resource.data.role == 'customer'
+                    && (!('companyId' in request.resource.data) || request.resource.data.companyId == null)
+                    && isNonEmptyString(request.resource.data.fullName)
+                    && isNonEmptyString(request.resource.data.email)
+                    && isNonEmptyString(request.resource.data.phone)
+                    && isTimestamp(request.resource.data.createdAt)
+                    && isTimestamp(request.resource.data.updatedAt);
+
+      // Prevent privilege escalation: Users cannot change 'role', 'companyId', 'uid', 'email', or 'createdAt'
+      allow update: if isAuthenticated()
+                    && request.auth.uid == userId
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fullName', 'phone', 'updatedAt'])
+                    && request.resource.data.role == resource.data.role
+                    && request.resource.data.get('companyId', null) == resource.data.get('companyId', null)
+                    && isNonEmptyString(request.resource.data.fullName)
+                    && isNonEmptyString(request.resource.data.phone)
+                    && isTimestamp(request.resource.data.updatedAt);
+
+      allow delete: if false; // Client profile deletion is prohibited
+    }
+
+    // ==========================================
+    // COMPANIES COLLECTION
+    // ==========================================
+    match /companies/{companyId} {
+      // Anyone can read active companies; Company Admins can read their assigned company
+      allow read: if resource.data.status == 'active' || isCompanyAdmin(companyId);
+
+      // Company Admin can only update allowed profile fields of their assigned company
+      allow update: if isCompanyAdmin(companyId)
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'description', 'phone', 'email', 'location', 'logoUrl', 'updatedAt'])
+                    && isNonEmptyString(request.resource.data.name)
+                    && isNonEmptyString(request.resource.data.description)
+                    && isNonEmptyString(request.resource.data.phone)
+                    && isNonEmptyString(request.resource.data.email)
+                    && isNonEmptyString(request.resource.data.location)
+                    && (!('logoUrl' in request.resource.data) || request.resource.data.logoUrl == null || isString(request.resource.data.logoUrl))
+                    && isTimestamp(request.resource.data.updatedAt);
+
+      allow create, delete: if false; // Managed out-of-band by platform owner
+    }
+
+    // ==========================================
+    // SERVICES COLLECTION
+    // ==========================================
+    match /services/{serviceId} {
+      // Public read requires service.isActive == true AND referenced company document status == 'active'
+      allow read: if (
+                    resource.data.isActive == true &&
+                    exists(/databases/$(database)/documents/companies/$(resource.data.companyId)) &&
+                    get(/databases/$(database)/documents/companies/$(resource.data.companyId)).data.status == 'active'
+                  ) || isCompanyAdmin(resource.data.companyId);
+
+      // Company Admin can create services for their own company IF company is active
+      allow create: if isCompanyAdmin(request.resource.data.companyId)
+                    && request.resource.data.keys().hasAll(['id', 'companyId', 'name', 'description', 'category', 'price', 'isActive', 'companyActive', 'createdAt', 'updatedAt'])
+                    && request.resource.data.keys().hasOnly(['id', 'companyId', 'name', 'description', 'category', 'price', 'imageUrl', 'isActive', 'companyActive', 'createdAt', 'updatedAt'])
+                    && request.resource.data.id == serviceId
+                    && request.resource.data.companyId == getAdminCompanyId()
+                    && exists(/databases/$(database)/documents/companies/$(request.resource.data.companyId))
+                    && get(/databases/$(database)/documents/companies/$(request.resource.data.companyId)).data.status == 'active'
+                    && isNonEmptyString(request.resource.data.name)
+                    && isNonEmptyString(request.resource.data.description)
+                    && isNonEmptyString(request.resource.data.category)
+                    && isNumber(request.resource.data.price) && request.resource.data.price >= 0
+                    && isBool(request.resource.data.isActive)
+                    && isBool(request.resource.data.companyActive) && request.resource.data.companyActive == true
+                    && (!('imageUrl' in request.resource.data) || request.resource.data.imageUrl == null || isString(request.resource.data.imageUrl))
+                    && isTimestamp(request.resource.data.createdAt)
+                    && isTimestamp(request.resource.data.updatedAt);
+
+      // Company Admin can update service fields, but CANNOT change id, companyId, createdAt, or companyActive.
+      // Reactivating a service (isActive == true) requires the referenced parent company to exist and be active.
+      allow update: if isCompanyAdmin(resource.data.companyId)
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'description', 'category', 'price', 'imageUrl', 'isActive', 'updatedAt'])
+                    && request.resource.data.id == resource.data.id
+                    && request.resource.data.companyId == resource.data.companyId
+                    && isNonEmptyString(request.resource.data.name)
+                    && isNonEmptyString(request.resource.data.description)
+                    && isNonEmptyString(request.resource.data.category)
+                    && isNumber(request.resource.data.price) && request.resource.data.price >= 0
+                    && isBool(request.resource.data.isActive)
+                    && (
+                      request.resource.data.isActive == false ||
+                      (
+                        exists(/databases/$(database)/documents/companies/$(resource.data.companyId)) &&
+                        get(/databases/$(database)/documents/companies/$(resource.data.companyId)).data.status == 'active'
+                      )
+                    )
+                    && (!('imageUrl' in request.resource.data) || request.resource.data.imageUrl == null || isString(request.resource.data.imageUrl))
+                    && isTimestamp(request.resource.data.updatedAt);
+
+      // Permanent Service Deletion is disabled in client app. Admins deactivate services via isActive toggle.
+      allow delete: if false;
+    }
+
+    // ==========================================
+    // SERVICE REQUESTS COLLECTION
+    // ==========================================
+    match /serviceRequests/{requestId} {
+      // Customers can read their own requests; Company Admins can read requests submitted to their company
+      allow read: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid ||
+        isCompanyAdmin(resource.data.companyId)
+      );
+
+      // Customer creates a request
+      allow create: if isCustomer()
+                    && request.resource.data.keys().hasAll(['id', 'customerId', 'companyId', 'serviceId', 'serviceName', 'servicePrice', 'customerName', 'customerPhone', 'description', 'status', 'createdAt', 'updatedAt'])
+                    && request.resource.data.keys().hasOnly(['id', 'customerId', 'companyId', 'serviceId', 'serviceName', 'servicePrice', 'customerName', 'customerPhone', 'description', 'status', 'createdAt', 'updatedAt'])
+                    && request.resource.data.id == requestId
+                    && request.resource.data.customerId == request.auth.uid
+                    && request.resource.data.status == 'PENDING'
+                    && isNonEmptyString(request.resource.data.customerName)
+                    && isNonEmptyString(request.resource.data.customerPhone)
+                    && isNonEmptyString(request.resource.data.description)
+                    && isNumber(request.resource.data.servicePrice) && request.resource.data.servicePrice >= 0
+                    && isTimestamp(request.resource.data.createdAt)
+                    && isTimestamp(request.resource.data.updatedAt)
+                    // Verify referenced service exists and is active
+                    && exists(/databases/$(database)/documents/services/$(request.resource.data.serviceId))
+                    && get(/databases/$(database)/documents/services/$(request.resource.data.serviceId)).data.isActive == true
+                    && get(/databases/$(database)/documents/services/$(request.resource.data.serviceId)).data.companyId == request.resource.data.companyId
+                    && get(/databases/$(database)/documents/services/$(request.resource.data.serviceId)).data.name == request.resource.data.serviceName
+                    && get(/databases/$(database)/documents/services/$(request.resource.data.serviceId)).data.price == request.resource.data.servicePrice
+                    // Verify referenced company exists and is active
+                    && exists(/databases/$(database)/documents/companies/$(request.resource.data.companyId))
+                    && get(/databases/$(database)/documents/companies/$(request.resource.data.companyId)).data.status == 'active';
+
+      // Updates: Customer Cancellation OR Admin State Machine Transition
+      allow update: if isAuthenticated()
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+                    && isTimestamp(request.resource.data.updatedAt)
+                    && (
+                      // Case 1: Customer Cancels a PENDING Request
+                      (
+                        resource.data.customerId == request.auth.uid
+                        && resource.data.status == 'PENDING'
+                        && request.resource.data.status == 'CANCELLED'
+                      )
+                      ||
+                      // Case 2: Company Admin State Transitions
+                      (
+                        isCompanyAdmin(resource.data.companyId)
+                        && (
+                          // PENDING -> ACCEPTED or REJECTED
+                          (resource.data.status == 'PENDING' && (request.resource.data.status == 'ACCEPTED' || request.resource.data.status == 'REJECTED')) ||
+                          // ACCEPTED -> IN_PROGRESS
+                          (resource.data.status == 'ACCEPTED' && request.resource.data.status == 'IN_PROGRESS') ||
+                          // IN_PROGRESS -> COMPLETED
+                          (resource.data.status == 'IN_PROGRESS' && request.resource.data.status == 'COMPLETED')
+                        )
+                      )
+                    );
+
+      allow delete: if false; // Client request deletion prohibited
+    }
+  }
+}

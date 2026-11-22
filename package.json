@@ -1,0 +1,13 @@
+{
+  "name": "epik-hub-security-tests",
+  "version": "1.0.0",
+  "description": "Firestore Security Rules Unit Tests for Epik Hub",
+  "main": "test/firestore.rules.spec.js",
+  "scripts": {
+    "test": "mocha test/firestore.rules.spec.js --timeout 10000"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.3",
+    "mocha": "^10.2.0"
+  }
+}

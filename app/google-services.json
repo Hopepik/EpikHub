@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "479183613541",
+    "project_id": "epik-hub2",
+    "storage_bucket": "epik-hub2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:479183613541:android:7032cb4bd981d87b90a08c",
+        "android_client_info": {
+          "package_name": "com.epikhub.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAmsoWIx_Dcl_XjHkp-J323p0jfgPO1CRo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
